@@ -8,7 +8,6 @@
   },
   "capabilities": ["network"],
   "readOnly": true,
-  "method": "A (签名 GET)",
   "example": "bb-browser site xiaohongshu/user_posts 5a927d8411be10720ae9e1e4"
 }
 */
@@ -16,49 +15,38 @@
 async function(args) {
   if (!args.user_id) return {error: 'Missing argument: user_id'};
 
-  let wpRequire;
-  try { window.webpackChunkxhs_pc_web.push([['__xhs_up__'], {}, (req) => { wpRequire = req; }]); } catch(e) {}
+  const app = document.querySelector('#app')?.__vue_app__;
+  const pinia = app?.config?.globalProperties?.$pinia;
+  if (!pinia?._s) return {error: 'Page not ready'};
 
-  const h = wpRequire(30251);
-  if (!h?.Pu || !window.mnsv2) return {error: 'Signing module not found'};
+  const userStore = pinia._s.get('user');
+  if (!userStore) return {error: 'User store not found'};
 
-  const apiPath = '/api/sns/web/v1/user_posted?num=30&cursor=&user_id=' + args.user_id + '&image_formats=jpg,webp,avif';
+  let captured = null;
+  const origOpen = XMLHttpRequest.prototype.open;
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m, u) { this.__url = u; return origOpen.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(b) {
+    if (this.__url?.includes('user_posted') && this.__url?.includes(args.user_id)) {
+      const x = this;
+      const orig = x.onreadystatechange;
+      x.onreadystatechange = function() { if (x.readyState === 4 && !captured) { try { captured = JSON.parse(x.responseText); } catch {} } if (orig) orig.apply(this, arguments); };
+    }
+    return origSend.apply(this, arguments);
+  };
 
-  const c = h.Pu(apiPath);
-  const s = h.Pu(apiPath);
-  const d = window.mnsv2(apiPath, c, s);
-  const xt = '' + Date.now();
-  const xs = 'XYS_' + h.xE(h.lz(JSON.stringify({x0:'3',x1:'xhs-pc-web',x2:'PC',x3:d,x4:''})));
-  const commonData = {x0:'3',x1:'xhs-pc-web',x2:'PC',x3:xt,x4:apiPath,x5:h.Pu(''),x6:xt,x7:'',x8:'',x9:h.tb(xt+apiPath)};
-  const xsc = h.xE(h.lz(JSON.stringify(commonData)));
+  try {
+    await userStore.fetchNotes({userId: args.user_id});
+    await new Promise(r => setTimeout(r, 500));
+  } finally {
+    XMLHttpRequest.prototype.open = origOpen;
+    XMLHttpRequest.prototype.send = origSend;
+  }
 
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', 'https://edith.xiaohongshu.com' + apiPath, true);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
-    xhr.setRequestHeader('Referer', 'https://www.xiaohongshu.com/');
-    xhr.setRequestHeader('X-s', xs);
-    xhr.setRequestHeader('X-t', xt);
-    xhr.setRequestHeader('X-S-Common', xsc);
-    xhr.setRequestHeader('xy-direction', '34');
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState === 4) {
-        try {
-          const r = JSON.parse(xhr.responseText);
-          if (!r.success) { resolve({error: r.msg || 'code:' + r.code}); return; }
-          const notes = (r.data.notes || []).map(n => ({
-            note_id: n.note_id,
-            title: n.display_title,
-            type: n.type,
-            likes: n.interact_info?.liked_count,
-            cover: n.cover?.info_list?.[0]?.url,
-            time: n.last_update_time
-          }));
-          resolve({user_id: args.user_id, count: notes.length, has_more: r.data.has_more, cursor: r.data.cursor, notes});
-        } catch { resolve({error: 'Parse error', status: xhr.status}); }
-      }
-    };
-    xhr.send();
-  });
+  if (!captured?.success) return {error: captured?.msg || 'User posts fetch failed'};
+  const notes = (captured.data?.notes || []).map(n => ({
+    note_id: n.note_id, title: n.display_title, type: n.type,
+    likes: n.interact_info?.liked_count, time: n.last_update_time
+  }));
+  return {user_id: args.user_id, count: notes.length, has_more: captured.data?.has_more, notes};
 }

@@ -30,19 +30,16 @@ bb-browser site reddit/thread <url>        # run with args
 | `twitter/thread` | `tweet_id` | Tweet + all replies (supports URL or numeric ID) |
 
 ### Xiaohongshu (小红书)
-| Command | Args | Method | Description |
-|---------|------|--------|-------------|
-| `xiaohongshu/me` | — | A | Current logged-in user info |
-| `xiaohongshu/feed` | `count` (optional) | A | Homepage recommended feed |
-| `xiaohongshu/search` | `keyword` | C | Search notes |
-| `xiaohongshu/note` | `note_id`, `xsec_token` (optional) | A | Note detail (title, body, interactions) |
-| `xiaohongshu/comments` | `note_id`, `xsec_token` (optional) | A | Note comments |
-| `xiaohongshu/user_posts` | `user_id` | A | User's published notes |
+| Command | Args | Description |
+|---------|------|-------------|
+| `xiaohongshu/me` | — | Current logged-in user info |
+| `xiaohongshu/feed` | — | Homepage recommended feed |
+| `xiaohongshu/search` | `keyword` | Search notes |
+| `xiaohongshu/note` | `note_id` | Note detail (title, body, interactions) |
+| `xiaohongshu/comments` | `note_id` | Note comments |
+| `xiaohongshu/user_posts` | `user_id` | User's published notes |
 
-> **Three methods for signed APIs:**
-> - **A**: Self-signing via webpack modules (`seccore_signv2` + `mnsv2`). Works for most endpoints.
-> - **B**: `bb-browser network requests --with-body` — passive capture of page's own signed requests. Zero risk.
-> - **C**: Pinia store actions — triggers page's full signing + interceptor chain. For heavily protected endpoints (search).
+> All XHS adapters use **pinia store actions** — calling the page's own Vue store functions, which go through the complete signing + interceptor chain. No webpack module IDs to maintain, no signing logic to replicate.
 
 ### GitHub
 | Command | Args | Description |

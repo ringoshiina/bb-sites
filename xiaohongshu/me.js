@@ -5,42 +5,45 @@
   "domain": "www.xiaohongshu.com",
   "args": {},
   "capabilities": ["network"],
-  "readOnly": true,
-  "method": "A (签名 GET, 不需要完整 interceptor)"
+  "readOnly": true
 }
 */
 
 async function(args) {
-  // 方式 A: 简单 GET 接口，自己签名即可
-  // user/me 是最宽松的接口，只需 X-s + X-t
-  let wpRequire;
-  try { window.webpackChunkxhs_pc_web.push([['__xhs_me__'], {}, (req) => { wpRequire = req; }]); } catch(e) {}
+  // 通过 pinia store 的 user action 获取，走页面完整签名链路
+  const app = document.querySelector('#app')?.__vue_app__;
+  const pinia = app?.config?.globalProperties?.$pinia;
+  if (!pinia?._s) return {error: 'Page not ready', hint: 'Ensure xiaohongshu.com is fully loaded'};
 
-  const h = wpRequire(30251);
-  if (!h?.Pu || !window.mnsv2) return {error: 'Signing module not found', hint: 'Page may not be fully loaded. Try refreshing.'};
+  // 拦截 user/me 的 response
+  let captured = null;
+  const origOpen = XMLHttpRequest.prototype.open;
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m, u) { this.__url = u; return origOpen.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(b) {
+    if (this.__url?.includes('/user/me')) {
+      const x = this;
+      const orig = x.onreadystatechange;
+      x.onreadystatechange = function() { if (x.readyState === 4 && !captured) { try { captured = JSON.parse(x.responseText); } catch {} } if (orig) orig.apply(this, arguments); };
+    }
+    return origSend.apply(this, arguments);
+  };
 
-  const apiPath = '/api/sns/web/v2/user/me';
-  const c = h.Pu(apiPath);
-  const s = h.Pu(apiPath);
-  const d = window.mnsv2(apiPath, c, s);
-  const xt = '' + Date.now();
-  const xs = 'XYS_' + h.xE(h.lz(JSON.stringify({x0:'3',x1:'xhs-pc-web',x2:'PC',x3:d,x4:''})));
+  try {
+    const userStore = pinia._s.get('user');
+    if (userStore?.getUserInfo) await userStore.getUserInfo();
+    else {
+      // fallback: 直接触发 user/me 请求
+      const feedStore = pinia._s.get('feed');
+      if (feedStore) await feedStore.fetchFeeds();
+    }
+    await new Promise(r => setTimeout(r, 500));
+  } finally {
+    XMLHttpRequest.prototype.open = origOpen;
+    XMLHttpRequest.prototype.send = origSend;
+  }
 
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', 'https://edith.xiaohongshu.com' + apiPath, true);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader('X-s', xs);
-    xhr.setRequestHeader('X-t', xt);
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState === 4) {
-        try {
-          const r = JSON.parse(xhr.responseText);
-          if (!r.success) { resolve({error: r.msg || 'code:' + r.code, hint: 'Not logged in?'}); return; }
-          resolve({nickname: r.data.nickname, red_id: r.data.red_id, desc: r.data.desc, gender: r.data.gender, userid: r.data.user_id});
-        } catch { resolve({error: 'Parse error', status: xhr.status}); }
-      }
-    };
-    xhr.send();
-  });
+  if (!captured?.success) return {error: captured?.msg || 'Failed to get user info', hint: 'Not logged in?'};
+  const u = captured.data;
+  return {nickname: u.nickname, red_id: u.red_id, desc: u.desc, gender: u.gender, userid: u.user_id};
 }

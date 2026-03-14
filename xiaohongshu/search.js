@@ -8,7 +8,6 @@
   },
   "capabilities": ["network"],
   "readOnly": true,
-  "method": "C (pinia store, 走页面完整签名链路)",
   "example": "bb-browser site xiaohongshu/search 美食"
 }
 */
@@ -16,43 +15,41 @@
 async function(args) {
   if (!args.keyword) return {error: 'Missing argument: keyword'};
 
-  // 方式 C: 调 pinia store action
-  // search 接口需要完整的 X-S-Common（含浏览器指纹），自签名会被风控
-  // 通过 pinia store 走页面完整的签名 + interceptor 链路
   const app = document.querySelector('#app')?.__vue_app__;
   const pinia = app?.config?.globalProperties?.$pinia;
-  if (!pinia?._s) return {error: 'Pinia not found', hint: 'Page may not be fully loaded'};
+  if (!pinia?._s) return {error: 'Page not ready'};
 
   const searchStore = pinia._s.get('search');
   if (!searchStore) return {error: 'Search store not found'};
 
-  // 设置关键词并触发搜索
-  searchStore.mutateSearchValue(args.keyword);
-  await searchStore.loadMore();
+  let captured = null;
+  const origOpen = XMLHttpRequest.prototype.open;
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m, u) { this.__url = u; return origOpen.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(b) {
+    if (this.__url?.includes('search/notes')) {
+      const x = this;
+      const orig = x.onreadystatechange;
+      x.onreadystatechange = function() { if (x.readyState === 4 && !captured) { try { captured = JSON.parse(x.responseText); } catch {} } if (orig) orig.apply(this, arguments); };
+    }
+    return origSend.apply(this, arguments);
+  };
 
-  // 从 __INITIAL_STATE__ 或 store 读结果需要等一下
-  await new Promise(r => setTimeout(r, 500));
-
-  // 读取 store 中的搜索结果
-  // store 内部通过 axios interceptor 发请求，签名完整，零风控
-  // 结果在 store state 里，但由于 Vue reactivity 不好直接序列化
-  // 所以通过 network capture 读结果（方式 B 辅助）
-
-  // 备选：直接从 DOM 读搜索结果
-  const noteElements = document.querySelectorAll('section.note-item, [class*="note-item"]');
-  if (noteElements.length > 0) {
-    const notes = Array.from(noteElements).slice(0, 20).map(el => {
-      const title = el.querySelector('[class*="title"], .desc')?.textContent?.trim();
-      const author = el.querySelector('[class*="author"], .name')?.textContent?.trim();
-      return {title, author};
-    }).filter(n => n.title);
-    if (notes.length > 0) return {keyword: args.keyword, count: notes.length, source: 'dom', notes};
+  try {
+    searchStore.mutateSearchValue(args.keyword);
+    await searchStore.loadMore();
+    await new Promise(r => setTimeout(r, 500));
+  } finally {
+    XMLHttpRequest.prototype.open = origOpen;
+    XMLHttpRequest.prototype.send = origSend;
   }
 
-  // 如果 DOM 没有（SPA 还没渲染），提示用 network --with-body 方式
-  return {
-    keyword: args.keyword,
-    triggered: true,
-    hint: 'Search triggered via pinia store. Use bb-browser network requests --filter "search/notes" --with-body --json to read results.'
-  };
+  if (!captured?.success) return {error: captured?.msg || 'Search failed', code: captured?.code};
+  const notes = (captured.data?.items || []).map(i => ({
+    id: i.id, xsec_token: i.xsec_token,
+    title: i.note_card?.display_title, type: i.note_card?.type,
+    author: i.note_card?.user?.nickname,
+    likes: i.note_card?.interact_info?.liked_count
+  }));
+  return {keyword: args.keyword, count: notes.length, has_more: captured.data?.has_more, notes};
 }
